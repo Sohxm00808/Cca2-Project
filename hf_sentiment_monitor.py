@@ -1,86 +1,153 @@
-"""
-Name : Soham Ashok Jagtap
-PRN  : 1302250127
-Topic: ML Framework - Hugging Face Sentiment Monitor (multiple problem statements)
+# Name: Jaylaksh Kawathekar
+# PRN : 1302250524
+# -----------------------------------------------------------------------------
+# ML Framework: Hugging Face Sentiment Monitor
+#
+# A sentiment monitor that classifies text as POSITIVE / NEGATIVE / NEUTRAL and
+# raises ALERTS when negative sentiment is strong. It is applied to several
+# problem statements instead of just one.
+#
+# Install : pip install transformers torch
+# Model   : distilbert-base-uncased-finetuned-sst-2-english (downloaded on first run)
+# If the transformers library is not installed, a simple keyword-based fallback
+# is used so the program still runs.
+# -----------------------------------------------------------------------------
 
-Uses a Hugging Face pipeline when `transformers` is installed (pip install transformers torch).
-If it is not available, a small keyword fallback runs so the script still works offline.
-"""
-import csv
+from collections import Counter
 
-try:
-    from transformers import pipeline
-    CLASSIFIER = pipeline("sentiment-analysis",
-                          model="distilbert-base-uncased-finetuned-sst-2-english")
-    MODE = "HuggingFace distilbert-sst2"
-except Exception:
-    CLASSIFIER = None
-    MODE = "Keyword fallback (transformers not installed)"
+NAME = "Jaylaksh Kawathekar"
+PRN = "1302250524"
 
-POS = {"great", "love", "excellent", "profit", "growth", "smooth", "fast", "helpful", "surge", "gain", "secure"}
-NEG = {"bad", "hate", "poor", "loss", "fraud", "slow", "crash", "scam", "decline", "delay", "hacked", "fail"}
+# Confidence below this value is reported as NEUTRAL
+NEUTRAL_THRESHOLD = 0.70
+# A NEGATIVE result with confidence at or above this value raises an alert
+ALERT_THRESHOLD = 0.90
 
-
-def classify(text):
-    if CLASSIFIER:
-        r = CLASSIFIER(text[:512])[0]
-        return r["label"], round(r["score"], 3)
-    words = set(text.lower().replace(".", "").replace(",", "").split())
-    p, n = len(words & POS), len(words & NEG)
-    return ("POSITIVE", 0.6) if p >= n else ("NEGATIVE", 0.6)
-
-
-# ---- Problem statements: each has its own texts and an alert threshold ----
-PROBLEMS = {
-    "P1 Financial news monitoring": {
-        "alert_if_negative_pct": 50,
-        "texts": ["Sensex surge as banking stocks post strong profit growth.",
-                  "Fintech startup hit by fraud scandal, shares crash.",
-                  "RBI keeps rates unchanged, markets stay calm and stable.",
-                  "Quarterly loss widens as loan defaults decline recovery."]},
-    "P2 UPI / payment app reviews": {
-        "alert_if_negative_pct": 40,
-        "texts": ["Payments are fast and the app is smooth, love it.",
-                  "Transaction failed twice and refund was a long delay.",
-                  "Excellent cashback offers and secure login.",
-                  "Customer care is poor, money stuck for days."]},
-    "P3 Bank customer support tickets": {
-        "alert_if_negative_pct": 30,
-        "texts": ["Thanks, the agent was very helpful and solved my issue.",
-                  "Third time complaining, nobody replies, really bad service.",
-                  "Card blocked after suspected fraud, fix this slow process.",
-                  "Loan approval was quick and the process was great."]},
-    "P4 Crypto / social media chatter": {
-        "alert_if_negative_pct": 60,
-        "texts": ["Bitcoin gain continues, community feels bullish and excited.",
-                  "Exchange hacked, users panic and withdraw everything.",
-                  "Another scam token rug pulled investors overnight.",
-                  "Regulation clarity is a great step for the industry."]},
-    "P5 Campus / course feedback": {
-        "alert_if_negative_pct": 35,
-        "texts": ["The FinTech lectures were excellent and practical.",
-                  "Timetable clashes and poor lab systems, very bad experience.",
-                  "Python sessions were helpful and well paced.",
-                  "Assignment deadlines are too tight."]},
+# ------------------------------ PROBLEM STATEMENTS ---------------------------
+PROBLEM_STATEMENTS = {
+    "1. Product Reviews (E-commerce)": [
+        "The headphones have amazing sound quality and the battery lasts all week.",
+        "The charger stopped working after two days. Complete waste of money.",
+        "Delivery was on time and the packaging was fine.",
+    ],
+    "2. Customer Support Tickets": [
+        "Your support team solved my issue in five minutes. Brilliant service!",
+        "I have been waiting for a refund for three weeks and nobody replies.",
+        "I want to know the status of my order number 4521.",
+    ],
+    "3. Social Media Brand Monitoring": [
+        "Loving the new update, the app feels so much faster now!",
+        "This app keeps crashing and the latest update made it worse.",
+        "Just downloaded the app to try it out.",
+    ],
+    "4. Student Feedback on Courses": [
+        "The professor explained machine learning with great real-life examples.",
+        "The lectures were boring and the assignments were confusing.",
+        "The course has twelve lectures and two assignments.",
+    ],
+    "5. News Headlines Tone Analysis": [
+        "Local startup wins national award for innovation in clean energy.",
+        "Factory fire leaves hundreds without jobs as losses mount.",
+        "City council to discuss the annual budget on Monday.",
+    ],
+    "6. Restaurant and Food Delivery Reviews": [
+        "The biryani was delicious and still hot when it arrived.",
+        "Food arrived cold and the order was missing two items.",
+        "I ordered a vegetable sandwich and a cold coffee.",
+    ],
 }
 
 
+# ------------------------------ MODEL LOADING --------------------------------
+def load_classifier():
+    """Load the Hugging Face pipeline, or fall back to a keyword classifier."""
+    try:
+        from transformers import pipeline
+
+        clf = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english",
+        )
+        print("[INFO] Using Hugging Face model: distilbert-base-uncased-finetuned-sst-2-english")
+        return clf
+    except Exception as err:  # library missing, no internet, etc.
+        print(f"[WARN] Hugging Face model unavailable ({type(err).__name__}). Using keyword fallback.")
+        return keyword_classifier
+
+
+def keyword_classifier(texts):
+    """Very simple fallback so the program runs without transformers."""
+    positive = {"amazing", "brilliant", "loving", "great", "delicious", "faster", "wins", "solved", "award", "hot"}
+    negative = {"waste", "stopped", "waiting", "crashing", "worse", "boring", "confusing", "fire", "losses", "missing"}
+    results = []
+    for t in texts:
+        words = {w.strip(".,!?").lower() for w in t.split()}
+        pos, neg = len(words & positive), len(words & negative)
+        if pos > neg:
+            results.append({"label": "POSITIVE", "score": 0.95})
+        elif neg > pos:
+            results.append({"label": "NEGATIVE", "score": 0.95})
+        else:
+            results.append({"label": "POSITIVE", "score": 0.55})
+    return results
+
+
+# ------------------------------ MONITOR LOGIC --------------------------------
+def interpret(result):
+    """Convert raw model output into POSITIVE / NEGATIVE / NEUTRAL and an alert flag."""
+    label, score = result["label"].upper(), result["score"]
+    if score < NEUTRAL_THRESHOLD:
+        label = "NEUTRAL"
+    alert = label == "NEGATIVE" and score >= ALERT_THRESHOLD
+    return label, score, alert
+
+
+def monitor(classifier, name, texts):
+    print(f"\n=== {name} ===")
+    results = classifier(texts)
+    counts = Counter()
+    alerts = 0
+    for text, res in zip(texts, results):
+        label, score, alert = interpret(res)
+        counts[label] += 1
+        alerts += int(alert)
+        flag = "  <-- ALERT: strongly negative" if alert else ""
+        print(f"[{label:8}] ({score:.2f}) {text}{flag}")
+    total = len(texts)
+    health = (counts["POSITIVE"] - counts["NEGATIVE"]) / total * 100
+    print(f"Summary: {dict(counts)} | Alerts: {alerts} | Sentiment score: {health:+.0f}")
+    return counts, alerts
+
+
 def main():
-    print(f"Mode: {MODE}\n")
-    rows = []
-    for name, cfg in PROBLEMS.items():
-        results = [classify(t) for t in cfg["texts"]]
-        neg = sum(1 for lab, _ in results if lab == "NEGATIVE")
-        neg_pct = 100 * neg / len(results)
-        alert = "ALERT" if neg_pct >= cfg["alert_if_negative_pct"] else "OK"
-        print(f"== {name} | negative {neg_pct:.0f}% (threshold {cfg['alert_if_negative_pct']}%) -> {alert}")
-        for t, (lab, sc) in zip(cfg["texts"], results):
-            print(f"   [{lab:8} {sc}] {t}")
-            rows.append([name, t, lab, sc, alert])
-        print()
-    with open("sentiment_report.csv", "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows([["Problem", "Text", "Label", "Score", "Status"]] + rows)
-    print("Saved sentiment_report.csv")
+    print(f"Name: {NAME} | PRN: {PRN}")
+    print("=" * 70)
+    classifier = load_classifier()
+
+    grand = Counter()
+    total_alerts = 0
+    for name, texts in PROBLEM_STATEMENTS.items():
+        counts, alerts = monitor(classifier, name, texts)
+        grand.update(counts)
+        total_alerts += alerts
+
+    print("\n" + "=" * 70)
+    print("OVERALL REPORT")
+    print(f"Total texts analysed : {sum(grand.values())}")
+    print(f"Distribution         : {dict(grand)}")
+    print(f"Total alerts raised  : {total_alerts}")
+
+    # Interactive mode: type your own text
+    print("\nType your own sentence to analyse (press Enter on an empty line to quit).")
+    while True:
+        try:
+            text = input("> ").strip()
+        except EOFError:
+            break
+        if not text:
+            break
+        label, score, alert = interpret(classifier([text])[0])
+        print(f"   {label} ({score:.2f})" + ("  <-- ALERT" if alert else ""))
 
 
 if __name__ == "__main__":
